@@ -15,7 +15,7 @@ Their current stack fails them in three ways:
 
 **There is no open-source, production-grade system that solves all three layers together.**
 
-This project does .
+This project does.
 
 ---
 
