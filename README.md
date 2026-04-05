@@ -19,7 +19,7 @@ This project does.
 
 ---
 
-## A Real Case: Why This Matters
+## 📜 A Real Case: Why This Matters
 
 > *This is the scenario this platform was designed to solve.*
 
