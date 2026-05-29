@@ -1,9 +1,10 @@
 import uuid
 from datetime import datetime
 from sqlalchemy import (
-    Column, String, Float, Boolean,
+    Column, String, Float, Numeric, Boolean,
     DateTime, Text, ForeignKey, Enum
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 import enum
@@ -62,13 +63,13 @@ class Transaction(Base):
     transaction_ref = Column(String(100), unique=True, nullable=False)
     sender_account = Column(String(100), nullable=False)
     receiver_account = Column(String(100), nullable=False)
-    amount = Column(Float, nullable=False)
+    amount = Column(Numeric(precision=18, scale=2), nullable=False)
     currency = Column(String(10), default="INR")
     channel = Column(String(50))
     status = Column(Enum(TransactionStatus), default=TransactionStatus.PENDING)
     anomaly_score = Column(Float, default=0.0)
     is_suspicious = Column(Boolean, default=False)
-    metadata_json = Column(Text)
+    metadata_json = Column(JSONB)
     created_at = Column(DateTime, default=datetime.utcnow)
     processed_at = Column(DateTime, nullable=True)
 
