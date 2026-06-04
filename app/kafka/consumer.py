@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
 from app.db.models import Transaction, TransactionStatus
+from app.flink.operators.aggregator import score_and_alert
 from app.kafka.dlq import send_to_dlq
 from app.kafka.schemas import TransactionEventSchema
 
@@ -75,11 +76,7 @@ def _persist_transaction(event: TransactionEventSchema) -> bool:
 
         try:
             session.commit()
-            logger.info(
-                f"Saved: {event.transaction_ref} | "
-                f"₹{event.amount:,} | "
-                f"{'🚨 SUSPICIOUS' if is_suspicious else '✓ clean'}"
-            )
+            logger.info(f"Saved: {event.transaction_ref} | ₹{event.amount:,}")
             return True
         except IntegrityError:
             session.rollback()
@@ -108,7 +105,12 @@ def _process_message(raw_value: bytes) -> None:
         send_to_dlq(raw_value, f"Schema invalid: {e.error_count()} error(s)", source)
         return
 
-    _persist_transaction(event)
+    written = _persist_transaction(event)
+
+    # Step 4: Run all anomaly detection operators on the saved transaction
+    if written:
+        with _SyncSession() as session:
+            score_and_alert(event.transaction_ref, session)
 
 
 def run_consumer() -> None:
