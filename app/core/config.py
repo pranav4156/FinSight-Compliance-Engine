@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     kafka_topic_raw_transactions: str = "raw-transactions"
     kafka_topic_upi_events: str = "upi-events"
     kafka_topic_alerts: str = "compliance-alerts"
+    kafka_topic_dlq: str = "dlq-transactions"
 
     # OpenAI
     openai_api_key: str

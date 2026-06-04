@@ -1,6 +1,36 @@
+import logging
+import threading
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.routes import api_router
 from app.core.config import settings
+from app.kafka.consumer import run_consumer, stop_consumer
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup — launch the Kafka consumer in a background daemon thread
+    consumer_thread = threading.Thread(
+        target=run_consumer,
+        daemon=True,
+        name="kafka-consumer",
+    )
+    consumer_thread.start()
+    logger.info("Kafka consumer thread started")
+    yield
+    # Shutdown — signal the consumer loop to exit cleanly
+    stop_consumer()
+    logger.info("Shutdown complete")
+
 
 app = FastAPI(
     title="FinSight Compliance Engine",
@@ -8,6 +38,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -17,6 +48,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(api_router)
 
 
 @app.get("/health", tags=["System"])
@@ -30,6 +63,4 @@ async def health_check():
 
 @app.get("/", tags=["System"])
 async def root():
-    return {
-        "message": "FinSight API is running. Visit /docs for the API explorer."
-    }
+    return {"message": "FinSight API is running. Visit /docs for the API explorer."}
