@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.metrics import alerts_created, anomaly_scores, transactions_flagged
 from app.db.models import Alert, AlertSeverity, Transaction, TransactionStatus
 from app.flink.operators.dormant_account import check_dormant
 from app.flink.operators.graph_cycle_detector import check_graph_cycle
@@ -93,6 +94,11 @@ def score_and_alert(transaction_ref: str, session: Session) -> float:
     txn.status = TransactionStatus.FLAGGED if is_suspicious else TransactionStatus.CLEARED
     txn.processed_at = datetime.utcnow()
 
+    # Record metrics
+    anomaly_scores.observe(final_score)
+    if is_suspicious:
+        transactions_flagged.inc()
+
     # Create alert if suspicious
     if is_suspicious:
         severity = _determine_severity(final_score)
@@ -105,6 +111,7 @@ def score_and_alert(transaction_ref: str, session: Session) -> float:
             severity=severity,
         )
         session.add(alert)
+        alerts_created.labels(severity=severity.value).inc()
 
         logger.warning(
             f"ALERT [{severity.value.upper()}] {transaction_ref} | "

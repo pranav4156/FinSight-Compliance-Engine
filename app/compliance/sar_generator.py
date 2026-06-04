@@ -8,9 +8,12 @@ from langchain_openai import ChatOpenAI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import time
+
 from app.compliance.embeddings import find_similar_cases, store_embedding
 from app.compliance.pdf_renderer import render_sar_pdf
 from app.core.config import settings
+from app.core.metrics import sar_generated_total, sar_generation_latency
 from app.db.models import Alert, AlertSeverity, SARReport, Transaction, TransactionStatus
 
 logger = logging.getLogger(__name__)
@@ -122,6 +125,8 @@ async def generate_sar(
     similar_cases = await find_similar_cases(search_query, alert.tenant_id, session)
     logger.info(f"Found {len(similar_cases)} similar past case(s) for context")
 
+    _start_time = time.time()
+
     # ── 5. Select model based on severity ─────────────────────────────────────
     model_name = MODEL_BY_SEVERITY.get(alert.severity, "gpt-4o-mini")
     logger.info(f"Using {model_name} for {alert.severity.value} severity alert")
@@ -182,5 +187,9 @@ async def generate_sar(
     # ── 9. Store embedding for future similarity search ───────────────────────
     await store_embedding(sar.id, narrative, session)
 
-    logger.info(f"SAR {sar.id} complete — PDF at {pdf_path}")
+    elapsed = time.time() - _start_time
+    sar_generation_latency.observe(elapsed)
+    sar_generated_total.labels(model=model_name).inc()
+
+    logger.info(f"SAR {sar.id} complete in {elapsed:.1f}s — PDF at {pdf_path}")
     return sar

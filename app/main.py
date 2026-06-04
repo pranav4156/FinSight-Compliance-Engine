@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from prometheus_fastapi_instrumentator import Instrumentator
+
 from app.api.routes import api_router
 from app.core.config import settings
 from app.kafka.consumer import run_consumer, stop_consumer
@@ -50,6 +52,10 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+
+# Expose /metrics endpoint for Prometheus scraping
+# Automatically instruments all routes: request count, latency, status codes
+Instrumentator().instrument(app).expose(app, include_in_schema=False)
 
 
 @app.get("/health", tags=["System"])

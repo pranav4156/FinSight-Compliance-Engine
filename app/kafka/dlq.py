@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from kafka import KafkaProducer
 
 from app.core.config import settings
+from app.core.metrics import dlq_messages
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,8 @@ def send_to_dlq(raw_message: bytes, error_reason: str, source_topic: str) -> Non
     }
     try:
         _get_dlq_producer().send(topic=settings.kafka_topic_dlq, value=payload)
+        reason_type = error_reason.split(":")[0].strip().replace(" ", "_").lower()
+        dlq_messages.labels(reason_type=reason_type[:40]).inc()
         logger.warning(f"DLQ ← {source_topic} | {error_reason[:120]}")
     except Exception as e:
         logger.critical(

@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
+from app.core.metrics import transactions_ingested
 from app.db.models import Transaction, TransactionStatus
 from app.flink.operators.aggregator import score_and_alert
 from app.kafka.dlq import send_to_dlq
@@ -77,6 +78,10 @@ def _persist_transaction(event: TransactionEventSchema) -> bool:
         try:
             session.commit()
             logger.info(f"Saved: {event.transaction_ref} | ₹{event.amount:,}")
+            transactions_ingested.labels(
+                channel=event.channel.value,
+                currency=event.currency,
+            ).inc()
             return True
         except IntegrityError:
             session.rollback()
