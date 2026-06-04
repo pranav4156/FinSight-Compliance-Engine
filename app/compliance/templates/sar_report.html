@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: "Times New Roman", Times, serif;
+    font-size: 11pt;
+    color: #1a1a1a;
+    background: #fff;
+    padding: 40px 50px;
+  }
+
+  /* ── Header ── */
+  .header {
+    border-bottom: 3px solid #1a3c5e;
+    padding-bottom: 14px;
+    margin-bottom: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+  .header-left h1 {
+    font-size: 17pt;
+    color: #1a3c5e;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .header-left p {
+    font-size: 9pt;
+    color: #555;
+    margin-top: 3px;
+  }
+  .header-right {
+    text-align: right;
+    font-size: 9pt;
+    color: #555;
+  }
+  .header-right .report-id {
+    font-size: 11pt;
+    font-weight: bold;
+    color: #1a3c5e;
+  }
+
+  /* ── Severity badge ── */
+  .severity-badge {
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 3px;
+    font-size: 9pt;
+    font-weight: bold;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 18px;
+  }
+  .severity-CRITICAL { background: #c0392b; color: #fff; }
+  .severity-HIGH     { background: #e67e22; color: #fff; }
+  .severity-MEDIUM   { background: #f39c12; color: #fff; }
+  .severity-LOW      { background: #27ae60; color: #fff; }
+
+  /* ── Section headings ── */
+  .section-title {
+    font-size: 10pt;
+    font-weight: bold;
+    color: #1a3c5e;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid #c9d4de;
+    padding-bottom: 4px;
+    margin: 20px 0 10px;
+  }
+
+  /* ── Meta table ── */
+  .meta-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10pt;
+    margin-bottom: 4px;
+  }
+  .meta-table td {
+    padding: 4px 8px;
+    vertical-align: top;
+  }
+  .meta-table td:first-child {
+    color: #555;
+    width: 180px;
+    font-weight: bold;
+  }
+  .meta-table tr:nth-child(even) {
+    background: #f5f7fa;
+  }
+
+  /* ── Transaction table ── */
+  .txn-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10pt;
+    margin-top: 6px;
+  }
+  .txn-table th {
+    background: #1a3c5e;
+    color: #fff;
+    padding: 6px 10px;
+    text-align: left;
+    font-size: 9pt;
+    letter-spacing: 0.5px;
+  }
+  .txn-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid #e0e6ed;
+    vertical-align: top;
+  }
+  .txn-table tr:nth-child(even) td { background: #f5f7fa; }
+
+  /* ── Narrative ── */
+  .narrative {
+    font-size: 10.5pt;
+    line-height: 1.75;
+    text-align: justify;
+    margin-top: 8px;
+    white-space: pre-wrap;
+  }
+
+  /* ── Anomaly score bar ── */
+  .score-container { margin-top: 8px; }
+  .score-bar-bg {
+    background: #e0e6ed;
+    border-radius: 4px;
+    height: 10px;
+    width: 100%;
+    margin-top: 4px;
+  }
+  .score-bar-fill {
+    height: 10px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #f39c12, #c0392b);
+  }
+
+  /* ── Analyst declaration ── */
+  .declaration {
+    margin-top: 30px;
+    padding: 14px 16px;
+    border: 1px solid #c9d4de;
+    border-left: 4px solid #1a3c5e;
+    background: #f8fafc;
+    font-size: 9.5pt;
+    line-height: 1.6;
+  }
+  .signature-block {
+    margin-top: 30px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .signature-line {
+    border-top: 1px solid #333;
+    width: 200px;
+    margin-top: 30px;
+    font-size: 9pt;
+    color: #555;
+    padding-top: 4px;
+  }
+
+  /* ── Footer ── */
+  .footer {
+    margin-top: 40px;
+    border-top: 1px solid #c9d4de;
+    padding-top: 8px;
+    font-size: 8.5pt;
+    color: #888;
+    text-align: center;
+  }
+
+  /* ── Rules fired tags ── */
+  .rule-tag {
+    display: inline-block;
+    background: #eaf0fb;
+    color: #1a3c5e;
+    border: 1px solid #b3c6e0;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 9pt;
+    margin: 2px 2px 2px 0;
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<div class="header">
+  <div class="header-left">
+    <h1>Suspicious Activity Report</h1>
+    <p>Filed under Prevention of Money Laundering Act (PMLA), 2002 &nbsp;|&nbsp; FIU-IND Compliant</p>
+  </div>
+  <div class="header-right">
+    <div class="report-id">{{ report_id }}</div>
+    <div>Filed: {{ date_filed }}</div>
+    <div>Reporting Entity: FinSight Compliance Engine</div>
+  </div>
+</div>
+
+<!-- ── Severity ── -->
+<span class="severity-badge severity-{{ severity }}">{{ severity }} Risk</span>
+
+<!-- ── Filing Information ── -->
+<div class="section-title">Filing Information</div>
+<table class="meta-table">
+  <tr><td>Report ID</td><td>{{ report_id }}</td></tr>
+  <tr><td>Alert ID</td><td>{{ alert_id }}</td></tr>
+  <tr><td>Date &amp; Time Filed</td><td>{{ date_filed }}</td></tr>
+  <tr><td>Reporting Institution</td><td>FinSight Compliance Engine v1.0</td></tr>
+  <tr><td>Filed By</td><td>{{ analyst_id }}</td></tr>
+  <tr><td>Severity Classification</td><td>{{ severity }}</td></tr>
+</table>
+
+<!-- ── Detection Summary ── -->
+<div class="section-title">Detection Summary</div>
+<table class="meta-table">
+  <tr>
+    <td>Rules Triggered</td>
+    <td>
+      {% for rule in rules_list %}
+        <span class="rule-tag">{{ rule }}</span>
+      {% endfor %}
+    </td>
+  </tr>
+  <tr>
+    <td>Anomaly Score</td>
+    <td>
+      <strong>{{ "%.3f"|format(anomaly_score) }} / 1.000</strong>
+      <div class="score-bar-bg">
+        <div class="score-bar-fill" style="width: {{ (anomaly_score * 100)|int }}%;"></div>
+      </div>
+    </td>
+  </tr>
+</table>
+
+<!-- ── Transaction Details ── -->
+<div class="section-title">Transaction Details</div>
+<table class="txn-table">
+  <thead>
+    <tr>
+      <th>Reference</th>
+      <th>Sender Account</th>
+      <th>Receiver Account</th>
+      <th>Amount</th>
+      <th>Channel</th>
+      <th>Timestamp</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>{{ transaction_ref }}</td>
+      <td>{{ sender_account }}</td>
+      <td>{{ receiver_account }}</td>
+      <td><strong>₹{{ amount }}</strong></td>
+      <td>{{ channel }}</td>
+      <td>{{ transaction_time }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ── SAR Narrative ── -->
+<div class="section-title">Suspicious Activity Narrative</div>
+<div class="narrative">{{ narrative }}</div>
+
+<!-- ── Analyst Declaration ── -->
+<div class="declaration">
+  <strong>Analyst Declaration:</strong> I certify that the information contained in this report
+  is accurate to the best of my knowledge and belief, based on the transaction data available
+  in the FinSight Compliance Engine. This report is filed in good faith under Section 12 of
+  the Prevention of Money Laundering Act (PMLA), 2002, and the rules made thereunder.
+  This report is confidential and intended solely for submission to FIU-IND.
+</div>
+
+<div class="signature-block">
+  <div>
+    <div class="signature-line">Compliance Analyst Signature</div>
+  </div>
+  <div>
+    <div class="signature-line">Date: {{ date_filed }}</div>
+  </div>
+  <div>
+    <div class="signature-line">Authorising Officer</div>
+  </div>
+</div>
+
+<!-- ── Footer ── -->
+<div class="footer">
+  CONFIDENTIAL — This document is a Suspicious Activity Report filed under PMLA, 2002.
+  Unauthorised disclosure is a punishable offence. &nbsp;|&nbsp;
+  Generated by FinSight Compliance Engine &nbsp;|&nbsp; {{ date_filed }}
+</div>
+
+</body>
+</html>

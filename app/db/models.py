@@ -4,6 +4,7 @@ from sqlalchemy import (
     Column, String, Float, Numeric, Boolean,
     DateTime, Text, ForeignKey, Enum
 )
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -106,6 +107,7 @@ class SARReport(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
     alert_id = Column(UUID(as_uuid=True), ForeignKey("alerts.id"))
     narrative = Column(Text)
+    narrative_embedding = Column(Vector(1536), nullable=True)
     pdf_path = Column(String(500), nullable=True)
     filed_with_fiu = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
