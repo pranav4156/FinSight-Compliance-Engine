@@ -12,22 +12,55 @@ Usage:
 """
 import argparse
 import random
+import sys
 import time
 import uuid
 
 import requests
 
-API_URL = "http://localhost:8000/api/v1/transactions"
+BASE_URL  = "http://localhost:8000/api/v1"
+API_URL   = f"{BASE_URL}/transactions"
 
-# Use a fixed tenant ID so all test transactions belong to the same tenant
-TENANT_ID = "00000000-0000-0000-0000-000000000001"
+ADMIN_EMAIL    = "admin@finsight.dev"
+ADMIN_PASSWORD = "Admin@123"
+TENANT_ID      = "00000000-0000-0000-0000-000000000001"
+
+_token: str | None = None
+
+
+def get_token() -> str:
+    global _token
+    if _token:
+        return _token
+    try:
+        resp = requests.post(
+            f"{BASE_URL}/auth/login",
+            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        _token = resp.json()["access_token"]
+        print(f"  Authenticated as {ADMIN_EMAIL}")
+        return _token
+    except Exception as e:
+        print(f"  Login failed: {e}")
+        print("  Make sure the server is running and seed_admin.py has been run.")
+        sys.exit(1)
+
+
+def _headers() -> dict:
+    return {"Authorization": f"Bearer {get_token()}"}
 
 
 def _post(data: dict) -> None:
+    # Remove tenant_id from body — it now comes from the JWT
+    data.pop("tenant_id", None)
     try:
-        resp = requests.post(API_URL, json=data, timeout=5)
+        resp = requests.post(API_URL, json=data, headers=_headers(), timeout=5)
         symbol = "✓" if resp.status_code == 202 else "✗"
         print(f"  {symbol} [{resp.status_code}] {data['transaction_ref']} — ₹{float(data['amount']):>14,.2f}")
+        if resp.status_code not in (202, 200):
+            print(f"    → {resp.json().get('detail', resp.text)[:100]}")
     except requests.exceptions.ConnectionError:
         print("  ✗ Cannot connect to API. Is the server running? (poetry run uvicorn app.main:app --reload)")
 

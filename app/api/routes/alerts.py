@@ -8,7 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.compliance.sar_generator import generate_sar
-from app.db.models import Alert, SARReport
+from app.core.dependencies import get_current_user, require_role
+from app.db.models import Alert, SARReport, User, UserRole
 from app.db.session import get_db
 
 logger = logging.getLogger(__name__)
@@ -48,11 +49,13 @@ class SARResponse(BaseModel):
 )
 async def list_alerts(
     resolved: bool = False,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
         select(Alert)
-        .where(Alert.is_resolved == resolved)
+        .where(Alert.is_resolved == resolved,
+               Alert.tenant_id == current_user.tenant_id)
         .order_by(Alert.created_at.desc())
         .limit(50)
     )
@@ -75,7 +78,11 @@ async def list_alerts(
     "/alerts/{alert_id}",
     summary="Get a specific alert",
 )
-async def get_alert(alert_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_alert(
+    alert_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(select(Alert).where(Alert.id == alert_id))
     alert = result.scalar_one_or_none()
 
@@ -99,6 +106,9 @@ async def get_alert(alert_id: UUID, db: AsyncSession = Depends(get_db)):
 )
 async def trigger_sar_generation(
     alert_id: UUID,
+    current_user: User = Depends(
+        require_role(UserRole.COMPLIANCE_ANALYST, UserRole.RISK_MANAGER, UserRole.ADMIN)
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -113,7 +123,7 @@ async def trigger_sar_generation(
     Idempotent — calling this twice for the same alert returns the existing SAR.
     """
     try:
-        sar = await generate_sar(alert_id=alert_id, session=db)
+        sar = await generate_sar(alert_id=alert_id, session=db, analyst_id=current_user.id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -138,9 +148,15 @@ async def trigger_sar_generation(
     "/sar-reports",
     summary="List all SAR reports",
 )
-async def list_sar_reports(db: AsyncSession = Depends(get_db)):
+async def list_sar_reports(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(
-        select(SARReport).order_by(SARReport.created_at.desc()).limit(50)
+        select(SARReport)
+        .where(SARReport.tenant_id == current_user.tenant_id)
+        .order_by(SARReport.created_at.desc())
+        .limit(50)
     )
     reports = result.scalars().all()
 
@@ -160,7 +176,11 @@ async def list_sar_reports(db: AsyncSession = Depends(get_db)):
     "/sar-reports/{sar_id}",
     summary="Get a specific SAR report with full narrative",
 )
-async def get_sar_report(sar_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_sar_report(
+    sar_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(select(SARReport).where(SARReport.id == sar_id))
     sar = result.scalar_one_or_none()
 
@@ -181,7 +201,11 @@ async def get_sar_report(sar_id: UUID, db: AsyncSession = Depends(get_db)):
     "/sar-reports/{sar_id}/pdf",
     summary="Download the SAR PDF",
 )
-async def download_sar_pdf(sar_id: UUID, db: AsyncSession = Depends(get_db)):
+async def download_sar_pdf(
+    sar_id: UUID,
+    current_user: User = Depends(require_role(UserRole.COMPLIANCE_ANALYST, UserRole.RISK_MANAGER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(select(SARReport).where(SARReport.id == sar_id))
     sar = result.scalar_one_or_none()
 
