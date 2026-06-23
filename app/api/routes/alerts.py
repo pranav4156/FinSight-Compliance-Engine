@@ -36,6 +36,9 @@ class SARResponse(BaseModel):
     narrative: str | None
     pdf_path: str | None
     filed_with_fiu: bool
+    judge_score: float | None
+    judge_critique: str | None
+    judge_passed: bool | None
     created_at: str
 
     model_config = {"from_attributes": True}
@@ -139,6 +142,9 @@ async def trigger_sar_generation(
         "narrative":    sar.narrative,
         "pdf_path":     sar.pdf_path,
         "filed_with_fiu": sar.filed_with_fiu,
+        "judge_score":   sar.judge_score,
+        "judge_critique": sar.judge_critique,
+        "judge_passed":  sar.judge_passed,
         "created_at":   str(sar.created_at),
         "message":      "SAR generated successfully. Review and file with FIU-IND within 7 days.",
     }
@@ -166,6 +172,8 @@ async def list_sar_reports(
             "alert_id":       str(r.alert_id) if r.alert_id else None,
             "pdf_path":       r.pdf_path,
             "filed_with_fiu": r.filed_with_fiu,
+            "judge_score":    r.judge_score,
+            "judge_passed":   r.judge_passed,
             "created_at":     str(r.created_at),
         }
         for r in reports
@@ -193,6 +201,9 @@ async def get_sar_report(
         "narrative":      sar.narrative,
         "pdf_path":       sar.pdf_path,
         "filed_with_fiu": sar.filed_with_fiu,
+        "judge_score":    sar.judge_score,
+        "judge_critique": sar.judge_critique,
+        "judge_passed":   sar.judge_passed,
         "created_at":     str(sar.created_at),
     }
 

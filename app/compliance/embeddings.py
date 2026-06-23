@@ -1,7 +1,6 @@
 import logging
 from uuid import UUID
 
-from langchain_openai import OpenAIEmbeddings
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,12 +9,13 @@ from app.db.models import SARReport
 
 logger = logging.getLogger(__name__)
 
-_embeddings_model: OpenAIEmbeddings | None = None
+_embeddings_model = None
 
 
-def get_embeddings_model() -> OpenAIEmbeddings:
+def get_embeddings_model():
     global _embeddings_model
     if _embeddings_model is None:
+        from langchain_openai import OpenAIEmbeddings
         _embeddings_model = OpenAIEmbeddings(
             model="text-embedding-3-small",
             openai_api_key=settings.openai_api_key,

@@ -1,9 +1,7 @@
 import math
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
 from app.db.models import Transaction
+from app.flink.operators.history import AccountHistory
 
 # Minimum past transactions needed before Z-score is meaningful
 MIN_HISTORY = 10
@@ -12,7 +10,7 @@ MIN_HISTORY = 10
 HISTORY_LIMIT = 100
 
 
-def check_zscore(txn: Transaction, session: Session) -> float:
+def check_zscore(txn: Transaction, history: AccountHistory) -> float:
     """
     Detect amount anomalies relative to an account's own personal history.
 
@@ -30,18 +28,12 @@ def check_zscore(txn: Transaction, session: Session) -> float:
 
     Edge case covered: #15 (legitimate high-volume vs suspicious high-volume)
     """
-    history = session.execute(
-        select(Transaction.amount).where(
-            Transaction.sender_account == txn.sender_account,
-            Transaction.tenant_id == txn.tenant_id,
-            Transaction.id != txn.id,
-        ).order_by(Transaction.created_at.desc()).limit(HISTORY_LIMIT)
-    ).scalars().all()
+    amounts_history = [h.amount for h in history.rows[:HISTORY_LIMIT]]
 
-    if len(history) < MIN_HISTORY:
+    if len(amounts_history) < MIN_HISTORY:
         return 0.0  # not enough history for a reliable baseline
 
-    amounts = [float(a) for a in history]
+    amounts = [float(a) for a in amounts_history]
     mean = sum(amounts) / len(amounts)
     variance = sum((x - mean) ** 2 for x in amounts) / len(amounts)
     std_dev = math.sqrt(variance)

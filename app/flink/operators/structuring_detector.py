@@ -1,10 +1,8 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
 from app.db.models import Transaction
+from app.flink.operators.history import AccountHistory
 
 # RBI/PMLA reporting threshold — transactions below this don't need mandatory reporting
 PMLA_THRESHOLD = Decimal("50000")
@@ -19,7 +17,7 @@ WINDOW_HOURS = 24
 MIN_TXN_COUNT = 3
 
 
-def check_structuring(txn: Transaction, session: Session) -> float:
+def check_structuring(txn: Transaction, history: AccountHistory) -> float:
     """
     Detect structuring (smurfing): deliberately splitting a large sum into
     multiple transactions just below the ₹50,000 PMLA reporting threshold
@@ -30,19 +28,18 @@ def check_structuring(txn: Transaction, session: Session) -> float:
     a deliberate evasion strategy.
 
     Edge case covered: #11 (structuring / smurfing)
-    """
-    window_start = datetime.utcnow() - timedelta(hours=WINDOW_HOURS)
 
-    recent_amounts = session.execute(
-        select(Transaction.amount).where(
-            Transaction.sender_account == txn.sender_account,
-            Transaction.tenant_id == txn.tenant_id,
-            Transaction.created_at >= window_start,
-            Transaction.amount >= STRUCTURING_LOWER,
-            Transaction.amount < PMLA_THRESHOLD,
-            Transaction.id != txn.id,
-        )
-    ).scalars().all()
+    Window is anchored to the transaction's own created_at, not wall-clock
+    now() — see velocity_check.py for why this matters for batch scoring.
+    """
+    reference_time = txn.created_at or datetime.utcnow()
+    window_start = reference_time - timedelta(hours=WINDOW_HOURS)
+
+    recent_amounts = [
+        h.amount for h in history.rows
+        if h.created_at and h.created_at >= window_start
+        and STRUCTURING_LOWER <= h.amount < PMLA_THRESHOLD
+    ]
 
     # Include the current transaction in the analysis
     all_amounts = list(recent_amounts)

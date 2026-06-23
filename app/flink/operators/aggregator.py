@@ -9,6 +9,7 @@ from app.core.metrics import alerts_created, anomaly_scores, transactions_flagge
 from app.db.models import Alert, AlertSeverity, Transaction, TransactionStatus
 from app.flink.operators.dormant_account import check_dormant
 from app.flink.operators.graph_cycle_detector import check_graph_cycle
+from app.flink.operators.history import fetch_account_history
 from app.flink.operators.isolation_forest_scorer import score_isolation_forest
 from app.flink.operators.structuring_detector import check_structuring
 from app.flink.operators.velocity_check import check_velocity
@@ -70,14 +71,19 @@ def score_and_alert(transaction_ref: str, session: Session) -> float:
         logger.error(f"Transaction not found for scoring: {transaction_ref}")
         return 0.0
 
-    # Run all operators and collect individual scores
+    # Single shared history query, reused by 5 of the 6 operators instead of
+    # each running its own near-duplicate query (this is the throughput fix —
+    # collapses 5 DB round-trips into 1). cycle detection stays separate since
+    # its query is tenant-wide, not scoped to this sender account.
+    history = fetch_account_history(txn, session)
+
     individual_scores = {
-        "velocity":         check_velocity(txn, session),
-        "structuring":      check_structuring(txn, session),
+        "velocity":         check_velocity(txn, history),
+        "structuring":      check_structuring(txn, history),
         "cycle":            check_graph_cycle(txn, session),
-        "zscore":           check_zscore(txn, session),
-        "dormant":          check_dormant(txn, session),
-        "isolation_forest": score_isolation_forest(txn, session),
+        "zscore":           check_zscore(txn, history),
+        "dormant":          check_dormant(txn, history),
+        "isolation_forest": score_isolation_forest(txn, history),
     }
 
     # Weighted average

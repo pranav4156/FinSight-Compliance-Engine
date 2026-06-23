@@ -1,14 +1,10 @@
 import logging
+import time
 from datetime import datetime, timezone
 from uuid import UUID
 
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-import time
 
 from app.compliance.embeddings import find_similar_cases, store_embedding
 from app.compliance.pdf_renderer import render_sar_pdf
@@ -59,6 +55,93 @@ TRANSACTION DETAILS:
 {similar_cases_section}
 
 Write the SAR narrative now:"""
+
+
+JUDGE_MODEL = "gpt-4o-mini"
+
+JUDGE_SYSTEM_PROMPT = """You are an independent compliance reviewer auditing a SAR narrative
+drafted by another analyst (or AI system) for a regulated Indian fintech institution.
+
+You are NOT the author. Your job is to critique, not rewrite.
+
+Score the narrative on three dimensions, each 0.0-1.0:
+1. FACTUAL ACCURACY: every amount, account, channel, and rule referenced in the narrative
+   must exactly match the source data below. Any invented or mismatched detail is a failure.
+2. COMPLETENESS: must cover all four required sections — Subject/Account Overview,
+   Suspicious Transaction Pattern, Why This Activity is Suspicious, Regulatory Basis for Filing.
+3. REGULATORY TONE: formal, precise, free of speculation or casual language.
+
+Respond ONLY with valid JSON in this exact shape, no markdown fences:
+{{"factual_accuracy": <float>, "completeness": <float>, "regulatory_tone": <float>, "critique": "<2-4 sentence explanation>"}}"""
+
+JUDGE_HUMAN_PROMPT = """SOURCE DATA (ground truth — the narrative must not contradict or invent beyond this):
+- Transaction Reference : {transaction_ref}
+- Sender                : {sender_account}
+- Receiver              : {receiver_account}
+- Amount                : ₹{amount}
+- Currency              : {currency}
+- Channel               : {channel}
+- Rules Triggered       : {rules_triggered}
+- Anomaly Score         : {anomaly_score:.3f}
+
+NARRATIVE TO AUDIT:
+{narrative}
+
+Return your JSON evaluation now:"""
+
+JUDGE_PASS_THRESHOLD = 0.7
+
+
+async def _judge_narrative(narrative: str, alert: Alert, txn: Transaction) -> dict:
+    """
+    Independent LLM-as-Judge pass over a freshly generated SAR narrative.
+    Uses a separate (cheaper) model than the generator so the same model
+    is never grading its own output. Returns a dict with score/critique/passed.
+    Judge failures never block the pipeline — they're logged for analyst review.
+    """
+    import json
+
+    from langchain_core.output_parsers import StrOutputParser
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_openai import ChatOpenAI
+
+    judge_llm = ChatOpenAI(
+        model=JUDGE_MODEL,
+        temperature=0.0,
+        openai_api_key=settings.openai_api_key,
+    )
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", JUDGE_SYSTEM_PROMPT),
+        ("human", JUDGE_HUMAN_PROMPT),
+    ])
+
+    chain = prompt | judge_llm | StrOutputParser()
+
+    try:
+        raw = await chain.ainvoke({
+            "transaction_ref":  txn.transaction_ref,
+            "sender_account":   txn.sender_account,
+            "receiver_account": txn.receiver_account,
+            "amount":           f"{txn.amount:,}",
+            "currency":         txn.currency,
+            "channel":          txn.channel or "UNKNOWN",
+            "rules_triggered":  alert.rule_triggered or "anomaly_detection",
+            "anomaly_score":    float(txn.anomaly_score or 0),
+            "narrative":        narrative,
+        })
+        verdict = json.loads(raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```"))
+        score = (
+            verdict["factual_accuracy"] + verdict["completeness"] + verdict["regulatory_tone"]
+        ) / 3
+        return {
+            "score": round(score, 3),
+            "critique": verdict["critique"],
+            "passed": score >= JUDGE_PASS_THRESHOLD,
+        }
+    except Exception as e:
+        logger.error(f"LLM-as-Judge evaluation failed: {e}")
+        return {"score": None, "critique": f"Judge evaluation failed: {e}", "passed": None}
 
 
 def _build_similar_cases_section(similar_cases: list[SARReport]) -> str:
@@ -131,9 +214,22 @@ async def generate_sar(
     model_name = MODEL_BY_SEVERITY.get(alert.severity, "gpt-4o-mini")
     logger.info(f"Using {model_name} for {alert.severity.value} severity alert")
 
+    # Lazy imports — LangChain 0.2.x uses pydantic v1 which has issues with
+    # Python 3.14+. Importing here (not at module level) prevents server
+    # startup failure. SAR generation requires Python ≤ 3.12 or LangChain 0.3.x.
+    try:
+        from langchain_core.output_parsers import StrOutputParser
+        from langchain_core.prompts import ChatPromptTemplate
+        from langchain_openai import ChatOpenAI
+    except Exception as e:
+        raise RuntimeError(
+            f"LangChain import failed: {e}. "
+            "SAR generation requires Python ≤ 3.12 or LangChain ≥ 0.3.x."
+        ) from e
+
     llm = ChatOpenAI(
         model=model_name,
-        temperature=0.1,  # low temperature = consistent, factual output
+        temperature=0.1,
         openai_api_key=settings.openai_api_key,
     )
 
@@ -162,11 +258,21 @@ async def generate_sar(
 
     logger.info(f"SAR narrative generated ({len(narrative)} chars)")
 
+    # ── 6b. Independent LLM-as-Judge evaluation ────────────────────────────────
+    verdict = await _judge_narrative(narrative, alert, txn)
+    logger.info(
+        f"LLM-as-Judge verdict for alert {alert_id}: score={verdict['score']} "
+        f"passed={verdict['passed']}"
+    )
+
     # ── 7. Save SAR to DB ─────────────────────────────────────────────────────
     sar = SARReport(
         tenant_id=alert.tenant_id,
         alert_id=alert_id,
         narrative=narrative,
+        judge_score=verdict["score"],
+        judge_critique=verdict["critique"],
+        judge_passed=verdict["passed"],
         created_by=analyst_id,
     )
     session.add(sar)
@@ -180,16 +286,25 @@ async def generate_sar(
     await session.refresh(sar)
 
     # ── 8. Generate PDF ───────────────────────────────────────────────────────
-    pdf_path = await render_sar_pdf(sar, alert, txn)
-    sar.pdf_path = pdf_path
-    await session.commit()
+    # Narrative + judge verdict are already committed at this point (the core
+    # compliance artifact). PDF/embedding are best-effort — a failure here must
+    # not surface as a 500 and must not leave the SAR in a half-failed state
+    # that's invisible to the analyst.
+    try:
+        sar.pdf_path = await render_sar_pdf(sar, alert, txn)
+        await session.commit()
+    except Exception as e:
+        logger.error(f"PDF rendering failed for SAR {sar.id}: {e}")
 
     # ── 9. Store embedding for future similarity search ───────────────────────
-    await store_embedding(sar.id, narrative, session)
+    try:
+        await store_embedding(sar.id, narrative, session)
+    except Exception as e:
+        logger.error(f"Embedding storage failed for SAR {sar.id}: {e}")
 
     elapsed = time.time() - _start_time
     sar_generation_latency.observe(elapsed)
     sar_generated_total.labels(model=model_name).inc()
 
-    logger.info(f"SAR {sar.id} complete in {elapsed:.1f}s — PDF at {pdf_path}")
+    logger.info(f"SAR {sar.id} complete in {elapsed:.1f}s — PDF at {sar.pdf_path}")
     return sar

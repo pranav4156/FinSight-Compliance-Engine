@@ -1,12 +1,10 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session
-
 from app.db.models import Transaction
+from app.flink.operators.history import AccountHistory
 
 
-def check_velocity(txn: Transaction, session: Session) -> float:
+def check_velocity(txn: Transaction, history: AccountHistory) -> float:
     """
     Detect velocity attacks: too many transactions from the same account
     in a short window.
@@ -17,17 +15,17 @@ def check_velocity(txn: Transaction, session: Session) -> float:
       ≥ 3 transactions in 60 seconds → 0.4  (medium)
 
     Edge case covered: #12 (velocity burst)
-    """
-    window_start = datetime.utcnow() - timedelta(seconds=60)
 
-    count = session.execute(
-        select(func.count(Transaction.id)).where(
-            Transaction.sender_account == txn.sender_account,
-            Transaction.tenant_id == txn.tenant_id,
-            Transaction.created_at >= window_start,
-            Transaction.id != txn.id,  # exclude the transaction being scored
-        )
-    ).scalar() or 0
+    Window is anchored to the transaction's own created_at, not wall-clock
+    now(). For live streaming these are the same moment; for batch-scoring
+    historical data long after ingestion they are not — anchoring to now()
+    would make every window comparison meaningless for anything but the
+    most recently-loaded row.
+    """
+    reference_time = txn.created_at or datetime.utcnow()
+    window_start = reference_time - timedelta(seconds=60)
+
+    count = sum(1 for h in history.rows if h.created_at and h.created_at >= window_start)
 
     if count >= 8:
         return 1.0

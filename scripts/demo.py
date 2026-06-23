@@ -64,8 +64,31 @@ data = resp.json()
 ok(f"API status    : {data['status']}")
 ok(f"Environment   : {data['environment']}")
 
-# ── Step 3: Submit Arjun Mehta scenario ───────────────────────────────────────
-step(3, "Submit suspicious transaction (Arjun Mehta insider trading pattern)")
+# ── Step 3a: Build account history (so Z-score and Isolation Forest work) ────
+step(3, "Building account history (12 normal transactions)")
+print("  Submitting normal trades to establish ₹50,000–₹1,00,000 baseline...")
+import random
+for i in range(12):
+    r = requests.post(f"{BASE_URL}/transactions", headers=headers, json={
+        "transaction_ref": f"HIST-{uuid.uuid4().hex[:8].upper()}",
+        "sender_account": "arjun.mehta@okaxis",
+        "receiver_account": f"broker_{i % 3}@ybl",
+        "amount": str(round(random.uniform(50000, 100000), 2)),
+        "currency": "INR",
+        "channel": "NEFT",
+        "metadata": {"demo": "history_building"},
+    }, timeout=10)
+    print(f"  {'✓' if r.status_code == 202 else '✗'} history txn {i+1}/12")
+    time.sleep(0.3)
+
+ok("History built. Waiting 5s for consumer to process...")
+time.sleep(5)
+
+# ── Step 3b: Submit the suspicious Arjun Mehta transaction ────────────────────
+print()
+print(f"  {'━'*54}")
+print(f"  Now submitting the anomalous transaction — ₹48L (12x above average)")
+print(f"  {'━'*54}")
 txn_ref = f"DEMO-ARJUN-{uuid.uuid4().hex[:6].upper()}"
 resp = requests.post(f"{BASE_URL}/transactions",
     headers=headers,
@@ -87,7 +110,7 @@ resp = requests.post(f"{BASE_URL}/transactions",
 )
 if resp.status_code == 202:
     ok(f"Transaction queued : {txn_ref}")
-    ok(f"Amount             : ₹48,00,000 (12x personal average)")
+    ok(f"Amount             : ₹48,00,000 (12x personal average of ~₹75,000)")
 else:
     warn(f"Unexpected status {resp.status_code}: {resp.text[:200]}")
 
@@ -98,12 +121,15 @@ for i in range(10):
     time.sleep(2)
     txns = requests.get(f"{BASE_URL}/transactions?limit=10", headers=headers, timeout=5)
     if txns.status_code == 200:
-        flagged = [t for t in txns.json() if t.get("transaction_ref") == txn_ref and t.get("is_suspicious")]
-        if flagged:
-            txn_data = flagged[0]
+        scored = [t for t in txns.json()
+                  if t.get("transaction_ref") == txn_ref
+                  and t.get("status") in ("flagged", "cleared")]
+        if scored:
+            txn_data = scored[0]
             ok(f"Transaction scored!")
             ok(f"  Anomaly score : {txn_data['anomaly_score']:.3f}")
-            ok(f"  Status        : {txn_data['status']}")
+            ok(f"  Status        : {txn_data['status'].upper()}")
+            ok(f"  Suspicious    : {txn_data['is_suspicious']}")
             break
     print(f"  ... checking ({i+1}/10)")
 else:

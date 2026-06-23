@@ -5,10 +5,9 @@ from pathlib import Path
 
 import joblib
 import numpy as np
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.db.models import Transaction
+from app.flink.operators.history import AccountHistory
 
 logger = logging.getLogger(__name__)
 
@@ -34,28 +33,24 @@ def _load_model():
     return _model
 
 
-def _build_features(txn: Transaction, session: Session) -> list:
-    """Extract the 6 features used during training."""
-    now = datetime.utcnow()
+def _build_features(txn: Transaction, history: AccountHistory) -> list:
+    """
+    Extract the 6 features used during training.
+
+    All recency windows are anchored to the transaction's own created_at,
+    not wall-clock now() — see velocity_check.py for why this matters for
+    batch scoring.
+    """
+    now = txn.created_at or datetime.utcnow()
     one_hour_ago = now - timedelta(hours=1)
     one_day_ago = now - timedelta(days=1)
     thirty_days_ago = now - timedelta(days=30)
 
-    history = session.execute(
-        select(
-            Transaction.amount,
-            Transaction.receiver_account,
-            Transaction.created_at,
-        ).where(
-            Transaction.sender_account == txn.sender_account,
-            Transaction.tenant_id == txn.tenant_id,
-            Transaction.id != txn.id,
-        ).order_by(Transaction.created_at.desc()).limit(200)
-    ).all()
+    rows = history.rows
 
     # Feature 1: amount normalized to 30-day personal average
     recent_30d = [
-        float(h.amount) for h in history
+        float(h.amount) for h in rows
         if h.created_at and h.created_at >= thirty_days_ago
     ]
     avg_30d = sum(recent_30d) / len(recent_30d) if recent_30d else float(txn.amount)
@@ -67,23 +62,17 @@ def _build_features(txn: Transaction, session: Session) -> list:
     day_of_week = txn_time.weekday()
 
     # Feature 4: is this a new counterparty?
-    known_receivers = {h.receiver_account for h in history}
+    known_receivers = {h.receiver_account for h in rows}
     is_new_counterparty = 0.0 if txn.receiver_account in known_receivers else 1.0
 
     # Feature 5 & 6: recent transaction frequency
-    txn_count_1h = sum(
-        1 for h in history
-        if h.created_at and h.created_at >= one_hour_ago
-    )
-    txn_count_24h = sum(
-        1 for h in history
-        if h.created_at and h.created_at >= one_day_ago
-    )
+    txn_count_1h = sum(1 for h in rows if h.created_at and h.created_at >= one_hour_ago)
+    txn_count_24h = sum(1 for h in rows if h.created_at and h.created_at >= one_day_ago)
 
     return [amount_normalized, hour_of_day, day_of_week, is_new_counterparty, txn_count_1h, txn_count_24h]
 
 
-def score_isolation_forest(txn: Transaction, session: Session) -> float:
+def score_isolation_forest(txn: Transaction, history: AccountHistory) -> float:
     """
     Score a transaction using the trained Isolation Forest model.
 
@@ -105,7 +94,7 @@ def score_isolation_forest(txn: Transaction, session: Session) -> float:
         return 0.0
 
     try:
-        features = _build_features(txn, session)
+        features = _build_features(txn, history)
         X = np.array(features).reshape(1, -1)
 
         # decision_function: negative = anomaly, positive = normal

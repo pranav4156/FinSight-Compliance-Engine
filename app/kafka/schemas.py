@@ -59,14 +59,16 @@ class TransactionEventSchema(BaseModel):
 
 
 class TransactionAPIRequest(BaseModel):
-    """What external systems (payment gateways, simulator) send to POST /api/v1/transactions."""
+    """What external systems (payment gateways, simulator) send to POST /api/v1/transactions.
+    tenant_id is optional — the route handler always overrides it with the JWT's tenant_id.
+    """
     transaction_ref: str
     sender_account: str
     receiver_account: str
     amount: Decimal
     currency: str = "INR"
     channel: TransactionChannel
-    tenant_id: UUID
+    tenant_id: Optional[UUID] = None
     metadata: Optional[dict] = {}
 
     @field_validator("amount")

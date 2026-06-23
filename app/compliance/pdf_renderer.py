@@ -4,7 +4,6 @@ from datetime import datetime
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
-from weasyprint import HTML
 
 from app.db.models import Alert, SARReport, Transaction
 
@@ -51,6 +50,7 @@ def _render_pdf_sync(sar: SARReport, alert: Alert, txn: Transaction) -> str:
     filename = f"SAR_{str(sar.id)[:8].upper()}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.pdf"
     pdf_path = REPORTS_DIR / filename
 
+    from weasyprint import HTML
     HTML(string=html_content).write_pdf(str(pdf_path))
 
     logger.info(f"PDF rendered → {pdf_path}  ({pdf_path.stat().st_size / 1024:.1f} KB)")

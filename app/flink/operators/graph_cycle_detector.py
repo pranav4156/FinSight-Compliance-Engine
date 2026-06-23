@@ -9,8 +9,15 @@ from app.db.models import Transaction
 
 logger = logging.getLogger(__name__)
 
-# Only consider transactions within this window for cycle detection
-CYCLE_WINDOW_HOURS = 2
+# Only consider transactions within this window for cycle detection.
+# Widened from 2h to 7 days after validating against the IBM AML benchmark
+# dataset — real multi-account laundering chains (fan-out/cycle patterns)
+# unfold over hours to days, not seconds; a 2h window could only ever catch
+# the fastest-moving schemes.
+CYCLE_WINDOW_HOURS = 24 * 7
+
+# Hard cap on rows considered — bounds worst-case cost as tenant volume grows
+MAX_EDGES = 5000
 
 
 def check_graph_cycle(txn: Transaction, session: Session) -> float:
@@ -26,38 +33,44 @@ def check_graph_cycle(txn: Transaction, session: Session) -> float:
         Account B sends ₹5L to C  (leg 2)
         Account C sends ₹5L to A  (leg 3) ← this transaction closes the cycle
 
-    Algorithm: build graph of recent transactions, add current transaction
-    as an edge, then check if any directed cycles exist involving both
-    the sender and receiver of the current transaction.
+    Algorithm: a directed cycle exists through this transaction's edge
+    (sender → receiver) if and only if a path already exists from receiver
+    back to sender. We check that directly with a single BFS (nx.has_path,
+    O(V+E)) instead of enumerating every simple cycle in the graph
+    (nx.simple_cycles, which is exponential in the worst case and becomes
+    the dominant cost as transaction volume grows — this was the throughput
+    bottleneck found during benchmarking).
 
     Library: NetworkX — industry-standard Python graph library.
 
     Edge case covered: #13 (round-tripping / money cycling)
+
+    Window is anchored to the transaction's own created_at, not wall-clock
+    now() — see velocity_check.py for why this matters for batch scoring.
     """
-    window_start = datetime.utcnow() - timedelta(hours=CYCLE_WINDOW_HOURS)
+    reference_time = txn.created_at or datetime.utcnow()
+    window_start = reference_time - timedelta(hours=CYCLE_WINDOW_HOURS)
 
     recent = session.execute(
         select(Transaction.sender_account, Transaction.receiver_account).where(
             Transaction.tenant_id == txn.tenant_id,
             Transaction.created_at >= window_start,
+            Transaction.created_at <= reference_time,  # causality — no peeking at "future" rows
             Transaction.id != txn.id,
-        )
+        ).limit(MAX_EDGES)
     ).all()
 
     G = nx.DiGraph()
     for row in recent:
         G.add_edge(row.sender_account, row.receiver_account)
 
-    # Add the current transaction edge
-    G.add_edge(txn.sender_account, txn.receiver_account)
-
     try:
-        for cycle in nx.simple_cycles(G):
-            if txn.sender_account in cycle and txn.receiver_account in cycle:
-                logger.warning(
-                    f"Cycle detected involving {txn.sender_account} → {txn.receiver_account}: {cycle}"
-                )
-                return 1.0
+        has_both_nodes = G.has_node(txn.receiver_account) and G.has_node(txn.sender_account)
+        if has_both_nodes and nx.has_path(G, txn.receiver_account, txn.sender_account):
+            logger.warning(
+                f"Cycle detected: {txn.sender_account} → {txn.receiver_account} closes a loop back to sender"
+            )
+            return 1.0
     except Exception as e:
         logger.error(f"Graph cycle detection error: {e}")
 
